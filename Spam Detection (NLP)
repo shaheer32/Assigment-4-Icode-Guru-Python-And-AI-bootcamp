@@ -1,0 +1,294 @@
+
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (accuracy_score, precision_score, recall_score, 
+                             f1_score, confusion_matrix, classification_report)
+import re
+import string
+
+
+# Load the dataset
+df = pd.read_csv('spam.csv', encoding='latin-1')
+
+# Keep only relevant columns
+df = df[['v1', 'v2']]
+df.columns = ['label', 'message']
+
+print("Dataset Shape:", df.shape)
+print("\nFirst few rows:")
+print(df.head())
+print("\nClass Distribution:")
+print(df['label'].value_counts())
+
+
+plt.figure(figsize=(8, 5))
+df['label'].value_counts().plot(kind='bar', color=['green', 'red'])
+plt.title('Distribution of Ham vs Spam Messages')
+plt.xlabel('Label')
+plt.ylabel('Count')
+plt.xticks(rotation=0)
+plt.savefig('spam_distribution.png')
+plt.show()
+
+# Add message length column
+df['length'] = df['message'].apply(len)
+
+print("\nStatistics by Label:")
+print(df.groupby('label')['length'].describe())
+
+# Visualize message lengths
+plt.figure(figsize=(12, 5))
+
+plt.subplot(1, 2, 1)
+df[df['label'] == 'ham']['length'].hist(bins=50, alpha=0.7, label='Ham', color='green')
+df[df['label'] == 'spam']['length'].hist(bins=50, alpha=0.7, label='Spam', color='red')
+plt.xlabel('Message Length')
+plt.ylabel('Frequency')
+plt.title('Message Length Distribution')
+plt.legend()
+
+plt.subplot(1, 2, 2)
+sns.boxplot(data=df, x='label', y='length')
+plt.title('Message Length by Label')
+
+plt.tight_layout()
+plt.savefig('spam_length_analysis.png')
+plt.show()
+
+
+def preprocess_text(text):
+    """Clean and preprocess text"""
+    # Convert to lowercase
+    text = text.lower()
+    
+    # Remove URLs
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+    
+    # Remove punctuation
+    text = text.translate(str.maketrans('', '', string.punctuation))
+    
+    # Remove extra whitespace
+    text = ' '.join(text.split())
+    
+    return text
+
+# Apply preprocessing
+df['clean_message'] = df['message'].apply(preprocess_text)
+
+print("\nExample of preprocessing:")
+print("Original:", df['message'].iloc[0])
+print("Cleaned:", df['clean_message'].iloc[0])
+
+
+# Convert labels to binary (0 = ham, 1 = spam)
+df['label_encoded'] = df['label'].map({'ham': 0, 'spam': 1})
+
+
+X = df['clean_message']
+y = df['label_encoded']
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+print(f"\nTraining set size: {len(X_train)}")
+print(f"Test set size: {len(X_test)}")
+
+
+print("\n" + "="*50)
+print("METHOD 1: BAG OF WORDS (CountVectorizer)")
+print("="*50)
+
+bow_vectorizer = CountVectorizer(max_features=3000, stop_words='english')
+X_train_bow = bow_vectorizer.fit_transform(X_train)
+X_test_bow = bow_vectorizer.transform(X_test)
+
+print(f"BoW feature matrix shape: {X_train_bow.shape}")
+
+
+
+# 7.1 Naive Bayes with BoW
+print("\n--- Naive Bayes with Bag of Words ---")
+nb_bow = MultinomialNB()
+nb_bow.fit(X_train_bow, y_train)
+y_pred_nb_bow = nb_bow.predict(X_test_bow)
+
+print("\nNaive Bayes + BoW Results:")
+print(f"Accuracy: {accuracy_score(y_test, y_pred_nb_bow):.4f}")
+print(f"Precision: {precision_score(y_test, y_pred_nb_bow):.4f}")
+print(f"Recall: {recall_score(y_test, y_pred_nb_bow):.4f}")
+print(f"F1-Score: {f1_score(y_test, y_pred_nb_bow):.4f}")
+
+# 7.2 Logistic Regression with BoW
+print("\n--- Logistic Regression with Bag of Words ---")
+lr_bow = LogisticRegression(max_iter=1000, random_state=42)
+lr_bow.fit(X_train_bow, y_train)
+y_pred_lr_bow = lr_bow.predict(X_test_bow)
+
+print("\nLogistic Regression + BoW Results:")
+print(f"Accuracy: {accuracy_score(y_test, y_pred_lr_bow):.4f}")
+print(f"Precision: {precision_score(y_test, y_pred_lr_bow):.4f}")
+print(f"Recall: {recall_score(y_test, y_pred_lr_bow):.4f}")
+print(f"F1-Score: {f1_score(y_test, y_pred_lr_bow):.4f}")
+
+
+print("\n" + "="*50)
+print("METHOD 2: TF-IDF (TfidfVectorizer)")
+print("="*50)
+
+tfidf_vectorizer = TfidfVectorizer(max_features=3000, stop_words='english')
+X_train_tfidf = tfidf_vectorizer.fit_transform(X_train)
+X_test_tfidf = tfidf_vectorizer.transform(X_test)
+
+print(f"TF-IDF feature matrix shape: {X_train_tfidf.shape}")
+
+
+# 9.1 Naive Bayes with TF-IDF
+print("\n--- Naive Bayes with TF-IDF ---")
+nb_tfidf = MultinomialNB()
+nb_tfidf.fit(X_train_tfidf, y_train)
+y_pred_nb_tfidf = nb_tfidf.predict(X_test_tfidf)
+
+print("\nNaive Bayes + TF-IDF Results:")
+print(f"Accuracy: {accuracy_score(y_test, y_pred_nb_tfidf):.4f}")
+print(f"Precision: {precision_score(y_test, y_pred_nb_tfidf):.4f}")
+print(f"Recall: {recall_score(y_test, y_pred_nb_tfidf):.4f}")
+print(f"F1-Score: {f1_score(y_test, y_pred_nb_tfidf):.4f}")
+
+# 9.2 Logistic Regression with TF-IDF
+print("\n--- Logistic Regression with TF-IDF ---")
+lr_tfidf = LogisticRegression(max_iter=1000, random_state=42)
+lr_tfidf.fit(X_train_tfidf, y_train)
+y_pred_lr_tfidf = lr_tfidf.predict(X_test_tfidf)
+
+print("\nLogistic Regression + TF-IDF Results:")
+print(f"Accuracy: {accuracy_score(y_test, y_pred_lr_tfidf):.4f}")
+print(f"Precision: {precision_score(y_test, y_pred_lr_tfidf):.4f}")
+print(f"Recall: {recall_score(y_test, y_pred_lr_tfidf):.4f}")
+print(f"F1-Score: {f1_score(y_test, y_pred_lr_tfidf):.4f}")
+
+
+results = pd.DataFrame({
+    'Model': ['NB + BoW', 'LR + BoW', 'NB + TF-IDF', 'LR + TF-IDF'],
+    'Accuracy': [
+        accuracy_score(y_test, y_pred_nb_bow),
+        accuracy_score(y_test, y_pred_lr_bow),
+        accuracy_score(y_test, y_pred_nb_tfidf),
+        accuracy_score(y_test, y_pred_lr_tfidf)
+    ],
+    'Precision': [
+        precision_score(y_test, y_pred_nb_bow),
+        precision_score(y_test, y_pred_lr_bow),
+        precision_score(y_test, y_pred_nb_tfidf),
+        precision_score(y_test, y_pred_lr_tfidf)
+    ],
+    'Recall': [
+        recall_score(y_test, y_pred_nb_bow),
+        recall_score(y_test, y_pred_lr_bow),
+        recall_score(y_test, y_pred_nb_tfidf),
+        recall_score(y_test, y_pred_lr_tfidf)
+    ],
+    'F1-Score': [
+        f1_score(y_test, y_pred_nb_bow),
+        f1_score(y_test, y_pred_lr_bow),
+        f1_score(y_test, y_pred_nb_tfidf),
+        f1_score(y_test, y_pred_lr_tfidf)
+    ]
+})
+
+print("\n" + "="*50)
+print("MODEL COMPARISON")
+print("="*50)
+print(results.to_string(index=False))
+
+# Visualize comparison
+results_melted = results.melt(id_vars='Model', var_name='Metric', value_name='Score')
+
+plt.figure(figsize=(12, 6))
+sns.barplot(data=results_melted, x='Metric', y='Score', hue='Model')
+plt.title('Model Performance Comparison')
+plt.ylim(0.8, 1.0)
+plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.tight_layout()
+plt.savefig('spam_model_comparison.png')
+plt.show()
+
+
+best_predictions = y_pred_lr_tfidf
+
+cm = confusion_matrix(y_test, best_predictions)
+
+plt.figure(figsize=(8, 6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+            xticklabels=['Ham', 'Spam'], 
+            yticklabels=['Ham', 'Spam'])
+plt.title('Confusion Matrix - Logistic Regression + TF-IDF')
+plt.ylabel('True Label')
+plt.xlabel('Predicted Label')
+plt.savefig('spam_confusion_matrix.png')
+plt.show()
+
+print("\nDetailed Classification Report:")
+print(classification_report(y_test, best_predictions, 
+                          target_names=['Ham', 'Spam']))
+
+
+def predict_spam(message, vectorizer=tfidf_vectorizer, model=lr_tfidf):
+    """Predict if a message is spam or ham"""
+    # Preprocess
+    clean_msg = preprocess_text(message)
+    
+    # Vectorize
+    msg_vector = vectorizer.transform([clean_msg])
+    
+    # Predict
+    prediction = model.predict(msg_vector)[0]
+    probability = model.predict_proba(msg_vector)[0]
+    
+    result = "SPAM" if prediction == 1 else "HAM"
+    confidence = probability[prediction] * 100
+    
+    print(f"\nMessage: {message}")
+    print(f"Prediction: {result}")
+    print(f"Confidence: {confidence:.2f}%")
+    
+    return result, confidence
+
+# Test examples
+print("\n" + "="*50)
+print("TESTING PREDICTIONS")
+print("="*50)
+
+test_messages = [
+    "Congratulations! You've won a free iPhone. Click here to claim now!",
+    "Hey, are we still meeting for lunch tomorrow?",
+    "URGENT: Your account has been compromised. Verify now!",
+    "Can you pick up some milk on your way home?",
+    "Win $1000 cash prize! Text WIN to 12345"
+]
+
+for msg in test_messages:
+    predict_spam(msg)
+
+
+import pickle
+
+# Save best model and vectorizer
+with open('spam_classifier_model.pkl', 'wb') as f:
+    pickle.dump(lr_tfidf, f)
+
+with open('tfidf_vectorizer.pkl', 'wb') as f:
+    pickle.dump(tfidf_vectorizer, f)
+
+print("\n" + "="*50)
+print("Models saved successfully!")
+print("- spam_classifier_model.pkl")
+print("- tfidf_vectorizer.pkl")
+print("="*50)
