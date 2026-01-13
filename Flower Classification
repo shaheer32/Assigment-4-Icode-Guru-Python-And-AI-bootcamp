@@ -1,0 +1,261 @@
+
+
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+import tensorflow_datasets as tfds
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+(train_ds, val_ds, test_ds), info = tfds.load(
+    'tf_flowers',
+    split=['train[:70%]', 'train[70%:85%]', 'train[85%:]'],
+    with_info=True,
+    as_supervised=True
+)
+
+num_classes = info.features['label'].num_classes
+class_names = info.features['label'].names
+
+print(f"Number of classes: {num_classes}")
+print(f"Class names: {class_names}")
+print(f"Training samples: {tf.data.experimental.cardinality(train_ds).numpy()}")
+print(f"Validation samples: {tf.data.experimental.cardinality(val_ds).numpy()}")
+print(f"Test samples: {tf.data.experimental.cardinality(test_ds).numpy()}")
+
+
+IMG_SIZE = 224  # MobileNetV2 input size
+BATCH_SIZE = 32
+AUTOTUNE = tf.data.AUTOTUNE
+
+def preprocess_image(image, label):
+    """Resize and normalize images"""
+    image = tf.image.resize(image, (IMG_SIZE, IMG_SIZE))
+    image = tf.keras.applications.mobilenet_v2.preprocess_input(image)
+    return image, label
+
+def augment_image(image, label):
+    """Apply data augmentation"""
+    image = tf.image.random_flip_left_right(image)
+    image = tf.image.random_brightness(image, 0.2)
+    image = tf.image.random_contrast(image, 0.8, 1.2)
+    return image, label
+
+# Prepare datasets
+train_ds = (train_ds
+    .map(preprocess_image, num_parallel_calls=AUTOTUNE)
+    .map(augment_image, num_parallel_calls=AUTOTUNE)
+    .shuffle(1000)
+    .batch(BATCH_SIZE)
+    .prefetch(AUTOTUNE)
+)
+
+val_ds = (val_ds
+    .map(preprocess_image, num_parallel_calls=AUTOTUNE)
+    .batch(BATCH_SIZE)
+    .prefetch(AUTOTUNE)
+)
+
+test_ds = (test_ds
+    .map(preprocess_image, num_parallel_calls=AUTOTUNE)
+    .batch(BATCH_SIZE)
+    .prefetch(AUTOTUNE)
+)
+
+
+base_model = keras.applications.MobileNetV2(
+    input_shape=(IMG_SIZE, IMG_SIZE, 3),
+    include_top=False,
+    weights='imagenet'
+)
+
+# Freeze base model layers
+base_model.trainable = False
+
+print(f"\nBase model has {len(base_model.layers)} layers")
+
+
+inputs = keras.Input(shape=(IMG_SIZE, IMG_SIZE, 3))
+
+# Pretrained base
+x = base_model(inputs, training=False)
+
+# Custom classification head
+x = layers.GlobalAveragePooling2D()(x)
+x = layers.Dropout(0.2)(x)
+outputs = layers.Dense(num_classes, activation='softmax')(x)
+
+model = keras.Model(inputs, outputs)
+
+
+model.compile(
+    optimizer=keras.optimizers.Adam(learning_rate=0.001),
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+model.summary()
+
+
+early_stopping = keras.callbacks.EarlyStopping(
+    monitor='val_loss',
+    patience=5,
+    restore_best_weights=True
+)
+
+reduce_lr = keras.callbacks.ReduceLROnPlateau(
+    monitor='val_loss',
+    factor=0.2,
+    patience=3,
+    min_lr=1e-7
+)
+
+model_checkpoint = keras.callbacks.ModelCheckpoint(
+    'best_flower_model.h5',
+    monitor='val_accuracy',
+    save_best_only=True
+)
+
+
+print("\n" + "="*50)
+print("Phase 1: Training with frozen base model")
+print("="*50)
+
+EPOCHS_PHASE1 = 10
+
+history_phase1 = model.fit(
+    train_ds,
+    validation_data=val_ds,
+    epochs=EPOCHS_PHASE1,
+    callbacks=[early_stopping, reduce_lr, model_checkpoint]
+)
+
+
+print("\n" + "="*50)
+print("Phase 2: Fine-tuning")
+print("="*50)
+
+# Unfreeze base model
+base_model.trainable = True
+
+# Freeze early layers, fine-tune last layers
+fine_tune_at = 100
+for layer in base_model.layers[:fine_tune_at]:
+    layer.trainable = False
+
+# Recompile with lower learning rate
+model.compile(
+    optimizer=keras.optimizers.Adam(learning_rate=0.0001),
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+print(f"Number of trainable layers: {len([l for l in model.layers if l.trainable])}")
+
+EPOCHS_PHASE2 = 10
+
+history_phase2 = model.fit(
+    train_ds,
+    validation_data=val_ds,
+    epochs=EPOCHS_PHASE2,
+    callbacks=[early_stopping, reduce_lr, model_checkpoint]
+)
+
+
+acc = history_phase1.history['accuracy'] + history_phase2.history['accuracy']
+val_acc = history_phase1.history['val_accuracy'] + history_phase2.history['val_accuracy']
+loss = history_phase1.history['loss'] + history_phase2.history['loss']
+val_loss = history_phase1.history['val_loss'] + history_phase2.history['val_loss']
+
+
+plt.figure(figsize=(12, 4))
+
+# Accuracy plot
+plt.subplot(1, 2, 1)
+plt.plot(acc, label='Training Accuracy')
+plt.plot(val_acc, label='Validation Accuracy')
+plt.axvline(x=EPOCHS_PHASE1, color='r', linestyle='--', label='Start Fine-tuning')
+plt.legend(loc='lower right')
+plt.title('Training and Validation Accuracy')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+
+# Loss plot
+plt.subplot(1, 2, 2)
+plt.plot(loss, label='Training Loss')
+plt.plot(val_loss, label='Validation Loss')
+plt.axvline(x=EPOCHS_PHASE1, color='r', linestyle='--', label='Start Fine-tuning')
+plt.legend(loc='upper right')
+plt.title('Training and Validation Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+
+plt.tight_layout()
+plt.savefig('flower_training_history.png')
+plt.show()
+
+
+test_loss, test_acc = model.evaluate(test_ds)
+print(f"\nTest Accuracy: {test_acc:.4f}")
+print(f"Test Loss: {test_loss:.4f}")
+
+
+def predict_flower(image_path):
+    """Predict flower species from image"""
+    img = keras.preprocessing.image.load_img(
+        image_path, target_size=(IMG_SIZE, IMG_SIZE)
+    )
+    img_array = keras.preprocessing.image.img_to_array(img)
+    img_array = tf.keras.applications.mobilenet_v2.preprocess_input(img_array)
+    img_array = np.expand_dims(img_array, axis=0)
+    
+    predictions = model.predict(img_array)
+    predicted_class = np.argmax(predictions[0])
+    confidence = predictions[0][predicted_class]
+    
+    print(f"Predicted: {class_names[predicted_class]}")
+    print(f"Confidence: {confidence:.2%}")
+    
+    plt.imshow(keras.preprocessing.image.load_img(image_path))
+    plt.title(f"{class_names[predicted_class]} ({confidence:.2%})")
+    plt.axis('off')
+    plt.show()
+
+# Visualize predictions on test set
+def visualize_predictions(num_images=9):
+    """Visualize predictions on test images"""
+    plt.figure(figsize=(12, 12))
+    
+    for images, labels in test_ds.take(1):
+        predictions = model.predict(images)
+        
+        for i in range(min(num_images, len(images))):
+            plt.subplot(3, 3, i + 1)
+            
+            # Denormalize image for display
+            img = images[i].numpy()
+            img = (img - img.min()) / (img.max() - img.min())
+            plt.imshow(img)
+            
+            predicted_label = np.argmax(predictions[i])
+            true_label = labels[i].numpy()
+            
+            color = 'green' if predicted_label == true_label else 'red'
+            
+            plt.title(
+                f"True: {class_names[true_label]}\n"
+                f"Pred: {class_names[predicted_label]} ({predictions[i][predicted_label]:.2%})",
+                color=color
+            )
+            plt.axis('off')
+    
+    plt.tight_layout()
+    plt.savefig('flower_predictions.png')
+    plt.show()
+
+visualize_predictions()
+
+
+model.save('flower_classifier_final.h5')
+print("\nModel saved successfully!")
